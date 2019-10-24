@@ -132,3 +132,26 @@ public static String format(Date date, String pattern) {
 
 
 
+
+
+
+
+#### 传入时间增加 N月
+
+```
+    /**
+     * 传入时间增加 N月
+     * @param date
+     * @param n
+     * @return
+     */
+    public static Date addNMONTH(Date date,Integer n){
+        Calendar rightNow = Calendar.getInstance();
+        rightNow.setTime(date);
+        rightNow.add(Calendar.MONTH, n);
+        Date time = rightNow.getTime();
+        return time;
+    }
+
+```
+
