@@ -386,3 +386,26 @@ public class OrderService implements Runnable {
 此时是一种分配机制
 
 会进行对注册的zk进行分配带序号的节点
+
+从最小的节点序号开始获取资源进行执行
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
