@@ -86,6 +86,30 @@ https://developer.mozilla.org/zh-CN/docs/Web/API/XMLHttpRequest
 
 
 
+## **5 XHR** **的** **ajax** **封装**(简单版 **axios)**
+
+**特点** 
+
+1. 函数的返回值为 promise, 成功的结果为 response, 异常的结果为 error 
+2. 能处理多种类型的请求: GET/POST/PUT/DELETE 
+3. 函数的参数为一个配置对象 
+		{
+			url: '', 
+			// 请求地址 
+			method: '', // 请求方式 GET/POST/PUT/DELETE 
+			params: {}, // GET/DELETE 请求的 query 参数 
+			data: {}, // POST 或 DELETE 请求的请求体参数 
+		} 
+4. 响应 json 数据自动解析为 js
+
+
+
+
+
+
+
+
+
 
 
 
