@@ -35,19 +35,154 @@ SpringCloud Config分为服务端和客户端两部分。
 
 
 
+配置文件
+
+![](picc/config本地.png)
+
+
+
+![](picc/config_github.png)
+
+
+
+
+
+
+
+
+
 ## Cinfig服务端
 
+#### pom
+
+```xml
+    <dependencies>
+<!--        <dependency>-->
+<!--            <groupId>org.springframework.cloud</groupId>-->
+<!--            <artifactId>spring-cloud-starter-bus-amqp</artifactId>-->
+<!--        </dependency>-->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-config-server</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+<!--        <dependency>-->
+<!--            <groupId>com.jcraft</groupId>-->
+<!--            <artifactId>jsch</artifactId>-->
+<!--            <version>0.1.54</version>-->
+<!--        </dependency>-->
+
+    </dependencies>
+```
 
 
 
+#### 配置文件
+
+```yml
+server:
+  port: 3344
+
+spring:
+  application:
+    name: cloud-config-center #注册eureka服务器的微服务名
+  cloud:
+    config:
+      server:
+        git:
+          uri: https://github.com/zzyybs/springcloud-config.git
+#          username: XXXX@qq.com
+#          password: XXXXX
+          # 搜索目录
+          search-paths:
+            - springcloud-config
+      # 读取分支
+      label: master
+#  rabbitmq:
+#    host: localhost
+#    port: 5672
+#    username: guest
+#    password: guest
+
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://eureka7001.com:7001/eureka
+```
 
 
 
+#### 启动类
+
+```java
+package com.mrchengs.springcloud;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.cloud.config.server.EnableConfigServer;
+
+@EnableConfigServer
+@SpringBootApplication
+public class ConfigCenterMain3344 {
+
+    public static void main(String[] args) {
+        SpringApplication.run(ConfigCenterMain3344.class,args);
+    }
+}
+
+```
 
 
 
+http://localhost:3344/master/config-dev.yml
+
+```
+config:
+  info: "master branch,springcloud-config/config-dev.yml version=7" 
+```
+
+等于git上的文件内容
 
 
+
+## 配置读取规则
+
+```
+/{application}/{profile}[/{label}]
+
+/{application}-{profile}.yml
+
+/{label}/{application}-{profile}.yml
+
+/{application}-{profile}.properties
+
+/{label}/{application}-{profile}.properties
+```
+
+label:分支
 
 
 
@@ -57,27 +192,229 @@ SpringCloud Config分为服务端和客户端两部分。
 
 ## Config客户端配置
 
+application.yml：用户级的资源配置项
+
+bootstrap.yml系统及级别配置文件优先级更高
+
+
+
+#### pom
+
+```xml
+ <dependencies>
+<!--        <dependency>-->
+<!--            <groupId>org.springframework.cloud</groupId>-->
+<!--            <artifactId>spring-cloud-starter-bus-amqp</artifactId>-->
+<!--        </dependency>-->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-config</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+```
+
+
+
+#### 配置文件bootstrap.yml
+
+```yml
+
+server:
+  port: 3355
+
+spring:
+  application:
+    name: config-client
+  cloud:
+    config:
+      label: master # 分支名称
+      name: config #配置文件名称
+      profile: dev # 读取的后缀，上述三个综合，为master分支上的config-dev.yml的配置文件被读取，http://localhost:3344:3344/master/config-dev.yml
+      uri: http://localhost:3344/ #配置中心的地址
+#  rabbitmq: #rabbitmq相关配置，15672是web管理端口，5672是mq访问端口
+#    port: 5672
+#    host: localhost
+#    username: guest
+#    password: guest
+
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://eureka7001.com:7001/eureka
+
+#management:
+#  endpoints:
+#    web:
+#      exposure:
+#        include: "*"
+server:
+  port: 3355
+
+spring:
+  application:
+    name: config-client
+  cloud:
+    config:
+      label: master # 分支名称
+      name: config #配置文件名称
+      profile: dev # 读取的后缀，上述三个综合，为master分支上的config-dev.yml的配置文件被读取，http://localhost:3344:3344/master/config-dev.yml
+      uri: http://localhost:3344/ #配置中心的地址
+#  rabbitmq: #rabbitmq相关配置，15672是web管理端口，5672是mq访问端口
+#    port: 5672
+#    host: localhost
+#    username: guest
+#    password: guest
+
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://eureka7001.com:7001/eureka
+
+#management:
+#  endpoints:
+#    web:
+#      exposure:
+#        include: "*"
+```
+
+
+
+#### 启动类
+
+```java
+package com.mechengs.springcloud;
+
+
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.cloud.netflix.eureka.EnableEurekaClient;
+/**
+ * @author ccrr
+ */
+@SpringBootApplication
+@EnableEurekaClient
+public class ConfigClientMain3355 {
+    public static void main(String[] args) {
+        SpringApplication.run(ConfigClientMain3355.class, args);
+    }
+}
+```
+
+
+
+#### controller
+
+```java
+package com.mechengs.springcloud.controller;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cloud.context.config.annotation.RefreshScope;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * @author ccrr
+ */
+@RestController
+//@RefreshScope
+public class ConfigClientController {
+
+    @Value("${config.info}")
+    private String configInfo;
+
+    @GetMapping("/configInfo")
+    public String getConfigInfo(){
+        return configInfo;
+    }
+}
+```
+
+
+
+http://localhost:3355/configInfo
+
+master branch,springcloud-config/config-dev.yml version=7
+
+
+
+##  Config客户端之动态刷新
+
+@RefreshScope注解
+
+```java
+package com.mechengs.springcloud.controller;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cloud.context.config.annotation.RefreshScope;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * @author ccrr
+ */
+@RestController
+@RefreshScope
+public class ConfigClientController {
+
+    @Value("${config.info}")
+    private String configInfo;
+
+    @GetMapping("/configInfo")
+    public String getConfigInfo(){
+        return configInfo;
+    }
+}
+```
+
+
+
+```
+       <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+```
 
 
 
 
 
+配置文件
+
+```yml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+```
 
 
 
-
-
-
-
-
-
-##  COnfig客户端之动态刷新
-
-
-
-
-
-
+此时需要发送post请求：curl -X "http://localhost:3355/actuator/refresh"
 
 
 
