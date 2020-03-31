@@ -414,7 +414,7 @@ management:
 
 
 
-此时需要发送post请求：curl -X "http://localhost:3355/actuator/refresh"
+此时需要发送post请求：curl -X POST "http://localhost:3355/autuator/refresh"
 
 
 
