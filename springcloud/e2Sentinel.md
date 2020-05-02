@@ -379,6 +379,457 @@ Blocked by Sentinel (flow limiting)
 
 
 
+## 降级
+
+[https://github.com/alibaba/Sentinel/wiki/%E7%86%94%E6%96%AD%E9%99%8D%E7%BA%A7](https://github.com/alibaba/Sentinel/wiki/熔断降级)
+
+![](picc/jiangji.png)
+
+
+
+- 平均响应时间 (`DEGRADE_GRADE_RT`)：当 1s 内持续进入 N 个请求，对应时刻的平均响应时间（秒级）均超过阈值（`count`，以 ms 为单位），那么在接下的时间窗口（`DegradeRule` 中的 `timeWindow`，以 s 为单位）之内，对这个方法的调用都会自动地熔断（抛出 `DegradeException`）。注意 Sentinel 默认统计的 RT 上限是 4900 ms，**超出此阈值的都会算作 4900 ms**，若需要变更此上限可以通过启动配置项 `-Dcsp.sentinel.statistic.max.rt=xxx` 来配置。
+- 异常比例 (`DEGRADE_GRADE_EXCEPTION_RATIO`)：当资源的每秒请求量 >= N（可配置），并且每秒异常总数占通过量的比值超过阈值（`DegradeRule` 中的 `count`）之后，资源进入降级状态，即在接下的时间窗口（`DegradeRule` 中的 `timeWindow`，以 s 为单位）之内，对这个方法的调用都会自动地返回。异常比率的阈值范围是 `[0.0, 1.0]`，代表 0% - 100%。
+- 异常数 (`DEGRADE_GRADE_EXCEPTION_COUNT`)：当资源近 1 分钟的异常数目超过阈值之后会进行熔断。注意由于统计时间窗口是分钟级别的，若 `timeWindow` 小于 60s，则结束熔断状态后仍可能再进入熔断状态。
+
+​	
+
+sentinel熔断降级会在调用链路中某个资源出现不稳定状态时（超时/异常比例升高）对这个资源进行限制
+
+让请求快速失败，避免影响到其他资源而导致级联错误
+
+资源进行降级之后，在借来的降级时间窗口之内，对该资源的调用都自动熔断（默认抛出DegradeException）
+
+
+
+sentinel的断路器是没有**半开状态**
+
+
+
+### RT
+
+![](picc/RT.png)
+
+使用jemeter进行每秒进入是个请求（>5）进行调用testD接口
+
+设置希望200ms能基本处理调用一个的任务
+
+超过200ms没有处理完，在未来的1s时间窗口内，断路器打开微服务不可能，保险丝断电
+
+
+
+```java
+    @GetMapping("/testD")
+    public String testD(){
+        try {
+            TimeUnit.SECONDS.sleep(1);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        log.info("testD 测试RT");
+        return "testD -----";
+    }
+```
+
+
+
+调用报错
+
+```
+Blocked by Sentinel (flow limiting)
+```
+
+
+
+
+
+### 异常比例
+
+![](picc/异常比例.png)
+
+
+
+```java
+    @GetMapping("/testException")
+    public String testException(){
+        log.info("testException 异常比例");
+        int age = 10 /0 ;
+        return "testException -----";
+    }
+```
+
+
+
+http://localhost:8401/testException
+
+```
+Blocked by Sentinel (flow limiting)
+```
+
+使用jemeter进行不断访问，会进行服务断电
+
+
+
+关闭jemeter
+
+```
+Whitelabel Error Page
+This application has no explicit mapping for /error, so you are seeing this as a fallback.
+
+Sat May 02 15:38:21 CST 2020
+There was an unexpected error (type=Internal Server Error, status=500).
+/ by zero
+```
+
+
+
+### 异常数
+
+![](picc/异常数.png)
+
+
+
+http://localhost:8401/testException
+
+访问1-5次
+
+```
+Whitelabel Error Page
+This application has no explicit mapping for /error, so you are seeing this as a fallback.
+
+Sat May 02 15:47:24 CST 2020
+There was an unexpected error (type=Internal Server Error, status=500).
+/ by zero
+```
+
+访问5次之后
+
+```
+Blocked by Sentinel (flow limiting)
+```
+
+会立即保护系统70s
+
+
+
+
+
+## 热点key限流
+
+![](picc/热点限流.png)
+
+[https://github.com/alibaba/Sentinel/wiki/%E7%83%AD%E7%82%B9%E5%8F%82%E6%95%B0%E9%99%90%E6%B5%81](https://github.com/alibaba/Sentinel/wiki/热点参数限流)
+
+
+
+源码：com.alibaba.csp.sentinel.slots.block.BlockException
+
+
+
+```java
+  /**
+     * SentinelResource:value唯一，blockHandler触发的方法
+     * @param p1
+     * @param p2
+     * @return
+     */
+    @GetMapping("/testHotKey")
+    @SentinelResource(value = "testHotKey", blockHandler = "dealTestHotKey")
+    public String testHotKey(@RequestParam(value = "p1", required = false) String p1,
+                             @RequestParam(value = "p2", required = false) String p2){
+        int age = 10 /0;
+        return "testHotKey -----";
+    }
+
+    public String dealTestHotKey(String p1, String p2, BlockException blockException){
+        return "dealTestHotKey---------";
+    }
+```
+
+http://localhost:8401/testHotKey
+
+```
+testHotKey -----
+```
+
+http://localhost:8401/testHotKey?p1=2&p2=e
+
+```
+testHotKey -----
+```
+
+
+
+
+
+![](picc/热点限流配置.png)
+
+资源名配置：testHotKey
+
+
+
+效果1：
+
+http://localhost:8401/testHotKey?p1=2
+
+正常在一秒超过阈值 之后
+
+```
+dealTestHotKey---------
+```
+
+未超过阈值
+
+```
+testHotKey -----
+```
+
+```
+@SentinelResource(value = "testHotKey", blockHandler = "dealTestHotKey")
+超过阈值立马使用兜底的方法进行抛异常返回
+```
+
+
+
+
+
+效果2：
+
+```java
+ @GetMapping("/testHotKey")
+   // @SentinelResource(value = "testHotKey", blockHandler = "dealTestHotKey")
+    @SentinelResource(value = "testHotKey")
+    public String testHotKey(@RequestParam(value = "p1", required = false) String p1,
+                             @RequestParam(value = "p2", required = false) String p2){
+        //int age = 10 /0;
+        return "testHotKey -----";
+    }
+```
+
+http://localhost:8401/testHotKey?p1=2
+
+超过阈值之后
+
+```
+Whitelabel Error Page
+This application has no explicit mapping for /error, so you are seeing this as a fallback.
+
+Sat May 02 16:14:54 CST 2020
+There was an unexpected error (type=Internal Server Error, status=500).
+No message available
+```
+
+
+
+### **参数例外项**
+
+即参数的类型在某个情况下的特殊配置
+
+如p1 =5时的限流阈值是300
+
+如p1 = 10的限流阈值是500
+
+
+
+![](picc/热点限流高级.png)
+
+
+
+http://localhost:8401/testHotKey?p1=6
+
+此时的阈值时100
+
+
+
+## 系统规则
+
+[https://github.com/alibaba/Sentinel/wiki/%E7%B3%BB%E7%BB%9F%E8%87%AA%E9%80%82%E5%BA%94%E9%99%90%E6%B5%81](https://github.com/alibaba/Sentinel/wiki/系统自适应限流)
+
+![](picc/系统规则.jpg)
+
+系统保护规则是从应用级别的**入口流量进行控制**，从单台机器的 load、CPU 使用率、平均 RT、入口 QPS 和并发线程数等几个维度监控应用指标，让系统尽可能跑在最大吞吐量的同时保证系统整体的稳定性。
+
+系统保护规则是应用整体维度的，而不是资源维度的，并且**仅对入口流量生效**。入口流量指的是进入应用的流量（`EntryType.IN`），比如 Web 服务或 Dubbo 服务端接收的请求，都属于入口流量。
+
+
+
+- **Load 自适应**（仅对 Linux/Unix-like 机器生效）：系统的 load1 作为启发指标，进行自适应系统保护。当系统 load1 超过设定的启发值，且系统当前的并发线程数超过估算的系统容量时才会触发系统保护（BBR 阶段）。系统容量由系统的 `maxQps * minRt` 估算得出。设定参考值一般是 `CPU cores * 2.5`。
+- **CPU usage**（1.5.0+ 版本）：当系统 CPU 使用率超过阈值即触发系统保护（取值范围 0.0-1.0），比较灵敏。
+- **平均 RT**：当单台机器上所有入口流量的平均 RT 达到阈值即触发系统保护，单位是毫秒。
+- **并发线程数**：当单台机器上所有入口流量的并发线程数达到阈值即触发系统保护。
+- **入口 QPS**：当单台机器上所有入口流量的 QPS 达到阈值即触发系统保护。
+
+
+
+## sentinelResource配置
+
+### 资源名称限流+后续处理
+
+**@SentinelResource(value = "byResource", blockHandler = "handleException")**
+
+![](picc/资源名称限流加后续处理.png)
+
+
+
+```java
+  @GetMapping("/byResource")
+    @SentinelResource(value = "byResource", blockHandler = "handleException")
+    public CommonResult byResource(){
+        return new CommonResult(200, "按资源名称限流测试OK", new Payment(2020L, "serial1001"));
+    }
+
+    public CommonResult handleException(BlockException blockException){
+        return new CommonResult<>(444, blockException.getClass().getCanonicalName()+"\t服务不可用" );
+    }
+```
+
+1s之内请求一次http://localhost:8401/byResource
+
+```
+{
+"code": 200,
+"message": "按资源名称限流测试OK",
+"data": {
+"id": 2020,
+"serial": "serial1001"
+}
+}
+```
+
+如果请求多次
+
+```
+{
+"code": 444,
+"message": "com.alibaba.csp.sentinel.slots.block.flow.FlowException\t服务不可用",
+"data": null
+}
+```
+
+
+
+
+
+### 按照Url地址限流+后续处理
+
+
+
+```java
+    @GetMapping("/rateLimit/byUrl")
+    @SentinelResource(value = "byUrl")
+    public CommonResult byUrl(){
+        return new CommonResult(200, "by url限流测试OK", new Payment(2020L, "serial1001"));
+    }
+```
+
+
+
+**@GetMapping("/rateLimit/byUrl")**
+
+![](picc/请求url加后续处理.png)
+
+
+
+http://localhost:8401//rateLimit/byUrl
+
+阈值之内访问
+
+```
+{
+"code": 200,
+"message": "by url限流测试OK",
+"data": {
+"id": 2020,
+"serial": "serial1001"
+}
+}
+```
+
+超过阈值
+
+```
+Blocked by Sentinel (flow limiting)
+```
+
+
+
+**会返回sentinel自带的结果**
+
+
+
+### 上述两种方法的局限：
+
+1、系统默认的没有提现自己业务的要求
+
+2、依照现有的条件，自定义处理方法和业务代码耦合在一块，不直观
+
+3、每个业务方法都有一个兜底的方法，加剧代码膨胀
+
+4、全局统一的处理方法没有提现
+
+
+
+### 客户自定义限流逻辑处理
+
+controller
+
+```java
+ @GetMapping("/rateLimit/customerBlockHandler")
+    @SentinelResource(value = "customerBlockHandler",
+            blockHandlerClass = CustomerBlockHandler.class, blockHandler = "handlerException")
+    public CommonResult customerBlockHandler(){
+        return new CommonResult(200, "客户自定义 限流测试OK", new Payment(2020L, "serial1001"));
+    }
+```
+
+handler
+
+```java
+public class CustomerBlockHandler {
+    public static CommonResult handlerException(BlockException exception) {
+        return new CommonResult(444, "客户自定义，global handlerException---1");
+    }
+
+    public static CommonResult handlerException2(BlockException exception) {
+        return new CommonResult(444, "客户自定义，global handlerException---2");
+  
+    }
+
+}
+```
+
+http://localhost:8401/rateLimit/customerBlockHandler
+
+阈值之内
+
+```
+{
+"code": 200,
+"message": "客户自定义 限流测试OK",
+"data": {
+"id": 2020,
+"serial": "serial1001"
+}
+}
+```
+
+阈值之外
+
+```
+{
+"code": 444,
+"message": "客户自定义，global handlerException---1",
+"data": null
+}
+```
+
+
+
+## 服务熔断
+
+
+
+
+
 
 
 
