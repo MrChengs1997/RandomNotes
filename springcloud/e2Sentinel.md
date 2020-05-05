@@ -824,31 +824,554 @@ http://localhost:8401/rateLimit/customerBlockHandler
 
 
 
-## 服务熔断
+## 服务熔断Ribbon
+
+### 实现两种服务提供者
+
+不同的启动类
+
+```java
+@SpringBootApplication
+@EnableDiscoveryClient
+public class PaymentMain9004 {
+    public static void main(String[] args) {
+        SpringApplication.run(PaymentMain9004.class, args);
+    }
+}
+```
+
+
+
+```java
+@SpringBootApplication
+@EnableDiscoveryClient
+public class paymentMain9003 {
+    public static void main(String[] args) {
+        SpringApplication.run(paymentMain9003.class, args);
+    }
+}
+```
+
+
+
+配置文件
+
+```yml
+server:
+  port: 9004
+
+spring:
+  application:
+    name: nacos-payment-provider
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+```
+
+```yml
+server:
+  port: 9003
+
+spring:
+  application:
+    name: nacos-payment-provider
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+```
+
+
+
+接口
+
+```java
+@RestController
+public class PaymentController {
+
+    @Value("${server.port}")
+    private String serverPort;
+
+    public static Map<Long, Payment> hashMap = new HashMap<>();
+
+    static {
+        hashMap.put(1L, new Payment(1L, IdUtil.simpleUUID()));
+        hashMap.put(2L, new Payment(2L, IdUtil.simpleUUID()));
+        hashMap.put(3L, new Payment(3L, IdUtil.simpleUUID()));
+    }
+
+    @GetMapping("/paymentSQL/{id}")
+    public CommonResult<Payment> paymentSQL(@PathVariable("id") Long id) {
+        Payment payment = hashMap.get(id);
+        return new CommonResult<>(200, "from mysql,serverPort:" + serverPort, payment);
+    }
+}
+```
+
+
+
+![](picc/sentinel的nacos.png)
+
+http://localhost:9003/paymentSQL/3
+
+```
+{
+"code": 200,
+"message": "from mysql,serverPort:9003",
+"data": {
+"id": 3,
+"serial": "71d40b7afe6940d5a0c1bccc9634e2af"
+}
+}
+```
+
+http://localhost:9004/paymentSQL/2
+
+```
+{
+"code": 200,
+"message": "from mysql,serverPort:9004",
+"data": {
+"id": 2,
+"serial": "161927c3855645cbb7d644f7fe277583"
+}
+}
+```
+
+
+
+### 服务调用者
+
+yml
+
+```yml
+server:
+  port: 84
+spring:
+  application:
+    name: nacos-order-consumer
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+    sentinel:
+      transport:
+        dashboard: localhost:8080
+        port: 8719
+
+#消费者将要去访问的微服务 名称（注册成功进nacos的微服务提供者）
+service-url:
+  nacos-user-service: http://nacos-payment-provider
+
+#激活sentinel对feign的支持
+feign:
+  sentinel:
+    enabled: true
+```
+
+
+
+启动类
+
+```java
+package com.springcloud;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
+import org.springframework.cloud.openfeign.EnableFeignClients;
+
+@SpringBootApplication
+@EnableDiscoveryClient
+@EnableFeignClients
+public class OrderNacosMain84 {
+    public static void main(String[] args) {
+        SpringApplication.run(OrderNacosMain84.class, args);
+    }
+}
+
+```
+
+配置类
+
+```java
+@Configuration
+public class config {
+
+
+    @Bean
+    @LoadBalanced
+    public RestTemplate getRestTemplate(){
+        return new RestTemplate();
+    }
+}
+
+```
+
+
+
+controller
+
+```java
+package com.springcloud.controller;
+
+
+import com.alibaba.csp.sentinel.annotation.SentinelResource;
+import com.atguigu.springcloud.entities.CommonResult;
+import com.atguigu.springcloud.entities.Payment;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.client.RestTemplate;
+
+import javax.annotation.Resource;
+
+@RestController
+@Slf4j
+public class CircleBreakerController {
+
+    private static final String SERVICE_URL = "http://nacos-payment-provider";
+
+    @Resource
+    private RestTemplate restTemplate;
+
+    @RequestMapping("/consumer/fallback/{id}")
+//    @SentinelResource(value = "fallback") //没有配置
+//    @SentinelResource(value = "fallback",fallback = "handlerFallback") //配置了fallback的，fallback只负责业务异常
+//    @SentinelResource(value = "fallback",blockHandler = "blockHandler") // 配置了blockHandler，只负责sentinel控制台配置违规
+    @SentinelResource(value = "fallback",fallback = "handlerFallback", blockHandler = "blockHandler",
+            exceptionsToIgnore = {IllegalArgumentException.class}) // 配置了blockHandler和fallback
+    public CommonResult<Payment> fallback(@PathVariable("id") Long id){
+        CommonResult<Payment> commonResult = restTemplate.getForObject(SERVICE_URL + "/paymentSQL/" + id, CommonResult.class);
+        if(id == 4){
+            throw new IllegalArgumentException("IllegalArgumentException,非法参数异常");
+        }else if(commonResult.getData() == null){
+            throw new NullPointerException("NullPointerException,该ID没有记录，空指针异常");
+        }
+        return commonResult;
+    }
+
+}
+
+```
+
+
+
+访问：
+
+http://localhost:84//consumer/fallback/1
+
+```
+{
+"code": 200,
+"message": "from mysql,serverPort:9003",
+"data": {
+"id": 1,
+"serial": "3926e05b05d447c1ba5dfac82ad51f18"
+}
+}
+```
+
+```
+{
+"code": 200,
+"message": "from mysql,serverPort:9004",
+"data": {
+"id": 1,
+"serial": "f9909f72f83a4a67923c20a4b7fefd5f"
+}
+}
+```
 
 
 
 
 
+### 场景一(无配置)
+
+```java
+     @RequestMapping("/consumer/fallback/{id}")
+     @SentinelResource(value = "fallback") //没有配置
+
+    public CommonResult<Payment> fallback(@PathVariable("id") Long id){
+        CommonResult<Payment> commonResult = restTemplate.getForObject(SERVICE_URL + "/paymentSQL/" + id, CommonResult.class);
+        if(id == 4){
+            throw new IllegalArgumentException("IllegalArgumentException,非法参数异常");
+        }else if(commonResult.getData() == null){
+            throw new NullPointerException("NullPointerException,该ID没有记录，空指针异常");
+        }
+        return commonResult;
+    }
+```
 
 
 
+此时在sentinel的控制台 不做任何配置
+
+http://localhost:84//consumer/fallback/1-3：可以正常出结果
+
+http://localhost:84//consumer/fallback/4
+
+```
+Whitelabel Error Page
+This application has no explicit mapping for /error, so you are seeing this as a fallback.
+
+Tue May 05 12:04:09 CST 2020
+There was an unexpected error (type=Internal Server Error, status=500).
+IllegalArgumentException,非法参数异常
+```
+
+http://localhost:84//consumer/fallback/5
+
+```
+Whitelabel Error Page
+This application has no explicit mapping for /error, so you are seeing this as a fallback.
+
+Tue May 05 12:04:27 CST 2020
+There was an unexpected error (type=Internal Server Error, status=500).
+NullPointerException,该ID没有记录，空指针异常
+```
+
+返回信息 不友好
 
 
 
+### 场景二（只配置fallback）返回运行时异常
 
 
 
+```java
+  @RequestMapping("/consumer/fallback/{id}")
+    @SentinelResource(value = "fallback",fallback = "handlerFallback") 
+
+    public CommonResult<Payment> fallback(@PathVariable("id") Long id){
+        CommonResult<Payment> commonResult = restTemplate.getForObject(SERVICE_URL + "/paymentSQL/" + id, CommonResult.class);
+        if(id == 4){
+            throw new IllegalArgumentException("IllegalArgumentException,非法参数异常");
+        }else if(commonResult.getData() == null){
+            throw new NullPointerException("NullPointerException,该ID没有记录，空指针异常");
+        }
+        return commonResult;
+    }
+    // 本例是fallback
+    public CommonResult handlerFallback(Long id, Throwable e){
+        Payment payment = new Payment(id, null);
+        return new CommonResult(444, "兜底异常handler，exception内容"+e.getMessage(), payment);
+    }
+```
+
+http://localhost:84//consumer/fallback/5
+
+```
+{
+"code": 444,
+"message": "兜底异常handler，exception内容NullPointerException,该ID没有记录，空指针异常",
+"data": {
+"id": 5,
+"serial": null
+}
+}
+```
 
 
 
+http://localhost:84//consumer/fallback/4
+
+```
+{
+"code": 444,
+"message": "兜底异常handler，exception内容IllegalArgumentException,非法参数异常",
+"data": {
+"id": 4,
+"serial": null
+}
+}
+```
 
 
 
+### 场景三（只配置blockHandler）
+
+```java
+   @RequestMapping("/consumer/fallback/{id}")
+   @SentinelResource(value = "fallback",blockHandler = "blockHandler") 
+
+    public CommonResult<Payment> fallback(@PathVariable("id") Long id){
+        CommonResult<Payment> commonResult = restTemplate.getForObject(SERVICE_URL + "/paymentSQL/" + id, CommonResult.class);
+        if(id == 4){
+            throw new IllegalArgumentException("IllegalArgumentException,非法参数异常");
+        }else if(commonResult.getData() == null){
+            throw new NullPointerException("NullPointerException,该ID没有记录，空指针异常");
+        }
+        return commonResult;
+    }
 
 
 
+    public CommonResult blockHandler(Long id, BlockException exception){
+        Payment payment = new Payment(id, null);
+        return new CommonResult<>(445, "blockHandler-sentinel 限流，无此流水号：blockException" + exception.getMessage(), payment);
+    }
+```
 
+
+
+配置sentinel的降级
+
+| 资源名   | 降级模式 | 阈值 | 时间窗口(s) | 操作 |
+| -------- | -------- | ---- | ----------- | ---- |
+| fallback | 异常数   | 2    | 2s          | 编辑 |
+
+请求urlhttp://localhost:84//consumer/fallback/4 	未达到阈值
+
+```
+Whitelabel Error Page
+This application has no explicit mapping for /error, so you are seeing this as a fallback.
+
+Tue May 05 12:15:26 CST 2020
+There was an unexpected error (type=Internal Server Error, status=500).
+IllegalArgumentException,非法参数异常
+```
+
+此时不会捕获java代码的运行时异常
+
+
+
+请求到达阈值
+
+```json
+{
+"code": 445,
+"message": "blockHandler-sentinel 限流，无此流水号：blockExceptionnull",
+"data": {
+"id": 4,
+"serial": null
+}
+}
+```
+
+
+
+### 场景四（场景2和3都配置）
+
+```java
+    @RequestMapping("/consumer/fallback/{id}")
+    @SentinelResource(value = "fallback",fallback = "handlerFallback", blockHandler = "blockHandler") // 配置了blockHandler和fallback
+    public CommonResult<Payment> fallback(@PathVariable("id") Long id){
+        CommonResult<Payment> commonResult = restTemplate.getForObject(SERVICE_URL + "/paymentSQL/" + id, CommonResult.class);
+        if(id == 4){
+            throw new IllegalArgumentException("IllegalArgumentException,非法参数异常");
+        }else if(commonResult.getData() == null){
+            throw new NullPointerException("NullPointerException,该ID没有记录，空指针异常");
+        }
+        return commonResult;
+    }
+    // 本例是fallback
+    public CommonResult handlerFallback(Long id, Throwable e){
+        Payment payment = new Payment(id, null);
+        return new CommonResult(444, "兜底异常handler，exception内容"+e.getMessage(), payment);
+    }
+
+    public CommonResult blockHandler(Long id, BlockException exception){
+        Payment payment = new Payment(id, null);
+        return new CommonResult<>(445, "blockHandler-sentinel 限流，无此流水号：blockException" + exception.getMessage(), payment);
+    }
+```
+
+
+
+http://localhost:84//consumer/fallback/1
+
+```json
+{
+"code": 200,
+"message": "from mysql,serverPort:9004",
+"data": {
+"id": 1,
+"serial": "f9909f72f83a4a67923c20a4b7fefd5f"
+}
+}
+```
+
+
+
+配置流控
+
+| 资源名   | 来源应用 | 流控模式 | 阈值类型 | 阈值 | 阈值模式 | 流控效果 | 操作 |
+| -------- | -------- | -------- | -------- | ---- | -------- | -------- | ---- |
+| fallback | default  | 直接     | QPS      | 2    | 单机     | 快速失败 | 编辑 |
+
+当请求达到阈值
+
+```json
+{
+"code": 445,
+"message": "blockHandler-sentinel 限流，无此流水号：blockExceptionnull",
+"data": {
+"id": 1,
+"serial": null
+}
+}
+```
+
+
+
+http://localhost:84/consumer/fallback/5访问一次
+
+```json
+{
+"code": 444,
+"message": "兜底异常handler，exception内容NullPointerException,该ID没有记录，空指针异常",
+"data": {
+"id": 5,
+"serial": null
+}
+}
+```
+
+到达阈值
+
+```json
+{
+"code": 445,
+"message": "blockHandler-sentinel 限流，无此流水号：blockExceptionnull",
+"data": {
+"id": 5,
+"serial": null
+}
+}
+```
+
+
+
+**若blockHandler和fallback都进行了配置**
+
+**则被限流而降级抛出BlockException时只会进入blockHandler处理逻辑**
+
+
+
+### exceptionsToIgnore属性
+
+```java
+ @SentinelResource(value = "fallback",fallback = "handlerFallback", blockHandler = "blockHandler",
+            exceptionsToIgnore = {IllegalArgumentException.class}) // 配置了blockHandler和fallback
+```
+
+假如报IllegalArgumentException异常就不会执行兜底的fallback方法没有降级效果
 
 
 
